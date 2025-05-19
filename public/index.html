@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker Deployment Form</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 20px;
+        }
+        .form-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            margin-top: 20px;
+        }
+        .header {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .form-footer {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .deployment-status {
+            margin-top: 20px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-md-8 col-lg-6">
+                <div class="header">
+                    <h1>Docker Deployment</h1>
+                    <p class="text-muted">Fill out this form to deploy your Docker container</p>
+                </div>
+                
+                <div class="form-container">
+                    <form id="deploymentForm">
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Project Name</label>
+                            <input type="text" class="form-control" id="name" name="name" required>
+                            <div class="form-text">Enter a name for this deployment</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="domain" class="form-label">Domain Name</label>
+                            <input type="text" class="form-control" id="domain" name="domain" required>
+                            <div class="form-text">Base domain name (e.g., example.com)</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="subdomain" class="form-label">Subdomain</label>
+                            <input type="text" class="form-control" id="subdomain" name="subdomain">
+                            <div class="form-text">Optional. Leave empty for root domain</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="credits" class="form-label">Credits</label>
+                            <textarea class="form-control" id="credits" name="credits" rows="3" required></textarea>
+                            <div class="form-text">Attribution or additional information</div>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary">Deploy Container</button>
+                        </div>
+                    </form>
+                    
+                    <div class="alert alert-info deployment-status" id="deploymentStatus" role="alert">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <span id="statusMessage">Initiating deployment...</span>
+                    </div>
+                </div>
+                
+                <div class="form-footer">
+                    <p class="text-muted small">This will trigger a GitHub Action to deploy your container</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('deploymentForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            // Show status
+            const statusElement = document.getElementById('deploymentStatus');
+            statusElement.style.display = 'block';
+            document.getElementById('statusMessage').textContent = 'Initiating deployment...';
+            
+            // Collect form data
+            const formData = new FormData(this);
+            const formDataObject = {};
+            formData.forEach((value, key) => {
+                formDataObject[key] = value;
+            });
+            
+            try {
+                // Submit the form data
+                const response = await fetch('/deploy', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formDataObject)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    statusElement.classList.remove('alert-info', 'alert-danger');
+                    statusElement.classList.add('alert-success');
+                    document.getElementById('statusMessage').textContent = 
+                        'Deployment initiated successfully! The site will be available shortly.';
+                } else {
+                    throw new Error(result.message || 'Unknown error occurred');
+                }
+            } catch (error) {
+                statusElement.classList.remove('alert-info', 'alert-success');
+                statusElement.classList.add('alert-danger');
+                document.getElementById('statusMessage').textContent = `Error: ${error.message}`;
+            }
+        });
+    </script>
+</body>
+</html>

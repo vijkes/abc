@@ -1,0 +1,153 @@
+name: Deploy Docker Container
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Project name'
+        required: true
+      domain:
+        description: 'Domain name'
+        required: true
+      subdomain:
+        description: 'Subdomain (optional)'
+        required: false
+        default: ''
+      credits:
+        description: 'Credits or additional information'
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.CPANEL_SSH_KEY }}
+
+      - name: Create site configuration files
+        run: |
+          # Create Nginx configuration
+          echo "Creating Nginx configuration for ${{ github.event.inputs.domain }}"
+          
+          # Determine the full domain
+          if [ -z "${{ github.event.inputs.subdomain }}" ]; then
+            FULL_DOMAIN="${{ github.event.inputs.domain }}"
+          else
+            FULL_DOMAIN="${{ github.event.inputs.subdomain }}.${{ github.event.inputs.domain }}"
+          fi
+          
+          # Create an Nginx configuration file
+          cat > "${FULL_DOMAIN}.conf" << EOF
+          server {
+              listen 80;
+              server_name ${FULL_DOMAIN};
+              
+              location / {
+                  proxy_pass http://localhost:DOCKER_PORT;
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+              }
+          }
+          EOF
+          
+          # Save deployment info
+          echo "Project: ${{ github.event.inputs.name }}" > deployment-info.txt
+          echo "Domain: ${FULL_DOMAIN}" >> deployment-info.txt
+          echo "Deployed at: $(date)" >> deployment-info.txt
+          echo "Credits: ${{ github.event.inputs.credits }}" >> deployment-info.txt
+          
+          # Create the deployment script
+          cat > deploy-container.sh << 'EOF'
+          #!/bin/bash
+          
+          # Set variables from deployment info
+          PROJECT_NAME=$(grep "Project:" deployment-info.txt | cut -d ':' -f2 | xargs)
+          DOMAIN=$(grep "Domain:" deployment-info.txt | cut -d ':' -f2 | xargs)
+          
+          # Clean project name for Docker container name
+          CONTAINER_NAME=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+          
+          # Pull the latest Docker image
+          docker pull $DOCKER_IMAGE
+          
+          # Stop and remove any existing container with the same name
+          docker stop $CONTAINER_NAME 2>/dev/null || true
+          docker rm $CONTAINER_NAME 2>/dev/null || true
+          
+          # Find an available port
+          PORT_START=8000
+          PORT_END=9000
+          
+          for PORT in $(seq $PORT_START $PORT_END); do
+            if ! docker ps -a | grep -q ":$PORT->"; then
+              DOCKER_PORT=$PORT
+              break
+            fi
+          done
+          
+          if [ -z "$DOCKER_PORT" ]; then
+            echo "No available ports found in the range $PORT_START-$PORT_END"
+            exit 1
+          fi
+          
+          # Update the Nginx configuration with the actual port
+          sed -i "s/DOCKER_PORT/$DOCKER_PORT/g" "${DOMAIN}.conf"
+          
+          # Run the Docker container
+          docker run -d \
+            --name $CONTAINER_NAME \
+            -p $DOCKER_PORT:80 \
+            -e VIRTUAL_HOST=$DOMAIN \
+            $DOCKER_IMAGE
+          
+          # Move Nginx config to the proper location
+          sudo mv "${DOMAIN}.conf" /etc/nginx/conf.d/
+          
+          # Reload Nginx
+          sudo systemctl reload nginx
+          
+          # Register domain in cPanel if needed
+          if ! grep -q "$DOMAIN" /etc/hosts; then
+            echo "Setting up domain $DOMAIN in cPanel"
+            # This would typically use cPanel API calls
+            # For this example, we'll use placeholder commands
+            
+            # Use cPanel API to add the domain
+            # This is a simplified example - in real life, you'd use the cPanel API
+            echo "127.0.0.1 $DOMAIN" | sudo tee -a /etc/hosts
+          fi
+          
+          echo "Deployment completed successfully"
+          echo "Site is now available at: http://$DOMAIN"
+          EOF
+          
+          chmod +x deploy-container.sh
+
+      - name: Deploy to cPanel
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.CPANEL_HOST }}
+          username: ${{ secrets.CPANEL_USERNAME }}
+          key: ${{ secrets.CPANEL_SSH_KEY }}
+          port: ${{ secrets.CPANEL_SSH_PORT }}
+          source: "*.conf,deployment-info.txt,deploy-container.sh"
+          target: "/home/${{ secrets.CPANEL_USERNAME }}/deployments/${{ github.event.inputs.name }}"
+          
+      - name: Execute deployment script
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.CPANEL_HOST }}
+          username: ${{ secrets.CPANEL_USERNAME }}
+          key: ${{ secrets.CPANEL_SSH_KEY }}
+          port: ${{ secrets.CPANEL_SSH_PORT }}
+          script: |
+            cd /home/${{ secrets.CPANEL_USERNAME }}/deployments/${{ github.event.inputs.name }}
+            export DOCKER_IMAGE=${{ secrets.DOCKER_IMAGE }}
+            ./deploy-container.sh
