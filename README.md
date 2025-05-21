@@ -23,7 +23,7 @@ Nginx installed on the cPanel server
 Installation
 
 Clone this repository:
-git clone https://github.com/yourusername/docker-deployment-form.git
+git clone https://github.com/vijkes/abc.git
 cd docker-deployment-form
 
 Install dependencies:
